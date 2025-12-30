@@ -30,7 +30,7 @@ jobs:
     - name: Run tests
       run: |
         mkdir -p test-results
-        pytest -q --junitxml=test-results/results.xml tests/
+        pytest -q --junitxml=test-results/results.xml --html=test-results/report.html --self-contained-html tests/
 
     - name: Upload test results
       if: always()
