@@ -1,10 +1,18 @@
+import os
 from playwright.sync_api import sync_playwright, expect
 import pytest
+
 @pytest.mark.parametrize("pw_browser", ["chromium", "firefox", "webkit"])
 def test_Login(pw_browser):
-    print(f"\n Running test on browser: {pw_browser.upper()}")
+    print(f"\nRunning test on browser: {pw_browser.upper()}")
+
+    headless = os.getenv("CI") == "true"  # CI=true is set by GitHub Actions
+
     with sync_playwright() as p:
-        browser = getattr(p, pw_browser).launch(headless=False, slow_mo=50)
+        browser = getattr(p, pw_browser).launch(
+            headless=headless,
+            slow_mo=0
+        )
         page = browser.new_page()
         page.goto("https://shop.qaautomationlabs.com/index.php")
         page.fill('input[id="email"]', 'demo@demo.com')
