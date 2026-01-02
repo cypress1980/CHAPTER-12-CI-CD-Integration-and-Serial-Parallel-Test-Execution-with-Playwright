@@ -44,6 +44,11 @@ jobs:
         --html=playwright-report/report-${{ matrix.shard }}.html \
         --self-contained-html
 
+    - name: Ensure artifact directories exist
+      run: |
+        mkdir -p playwright-report test-results
+        ls -la playwright-report || true
+
     - name: Upload test results (optional, for traces/videos)
       if: always()
       uses: actions/upload-artifact@v4
@@ -51,4 +56,4 @@ jobs:
         name: playwright-results-shard-${{ matrix.shard }}
         path: |
           test-results/
-          playwright-report/  # If using HTML reporter
+          playwright-report/
