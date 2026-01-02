@@ -36,7 +36,7 @@ jobs:
 
     - name: Run sharded tests
       run: |
-        pytest -n auto --dist loadgroup ${{ matrix.shard }}/${{ matrix.total_shards }} --html=playwright-report/report-${{ matrix.shard }}.html --self-contained-html
+        pytest -n auto --dist=loadgroup ${{ matrix.shard }}/${{ matrix.total_shards }} --html=playwright-report/report-${{ matrix.shard }}.html --self-contained-html
 
     - name: Upload test results (optional, for traces/videos)
       if: always()
