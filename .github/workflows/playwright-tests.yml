@@ -1,36 +1,48 @@
-name: Playwright Sharded Tests
+name: Playwright Tests
 
 on:
   push:
+    branches: [ main ]
   pull_request:
+    branches: [ main ]
 
 jobs:
-  playwright-tests:
+  test:
+    timeout-minutes: 60
     runs-on: ubuntu-latest
-
     strategy:
       fail-fast: false
       matrix:
+        # Adjust number of shards (e.g., 5 for 5 parallel jobs)
+        # Free GitHub runners allow up to ~20 concurrent jobs
         shard: [1, 2, 3]
+        total_shards: [3]
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.12'  # Or your version
 
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          playwright install --with-deps
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt  # Includes pytest, pytest-playwright, pytest-xdist, pytest-split
 
-      - name: Run Playwright tests (Shard ${{ matrix.shard }})
-        run: |
-          pytest tests/ \
-            -n 2 \
-            --dist=loadfile \
-            --shard-id=${{ matrix.shard }} \
-            --num-shards=3
+    - name: Install Playwright browsers
+      run: playwright install --with-deps
+
+    - name: Run sharded tests
+      run: |
+        pytest -n auto --dist=loadgroup ${{ matrix.shard }}/${{ matrix.total_shards }} --html=playwright-report/report-${{ matrix.shard }}.html --self-contained-html
+
+    - name: Upload test results (optional, for traces/videos)
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: playwright-results-shard-${{ matrix.shard }}
+        path: |
+          test-results/
+          playwright-report/  # If using HTML reporter
