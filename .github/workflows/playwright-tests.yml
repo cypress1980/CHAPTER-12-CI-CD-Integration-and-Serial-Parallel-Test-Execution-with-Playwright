@@ -67,8 +67,8 @@ jobs:
     - uses: actions/setup-node@v5
       with:
         node-version: lts/*
-    - name: Install dependencies
-      run: npm ci
+    - name: Install Playwright (needed for merge)
+      run: npm install --no-audit --no-fund playwright
 
     - name: Download blob reports from GitHub Actions Artifacts
       uses: actions/download-artifact@v5
