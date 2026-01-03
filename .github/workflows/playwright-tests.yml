@@ -7,7 +7,7 @@ on:
     branches: [ main ]
 
 ########################################
-# 1️⃣ PARALLEL SHARDED EXECUTION (FAST)
+# PARALLEL SHARDED EXECUTION
 ########################################
 jobs:
   parallel-tests:
@@ -55,65 +55,13 @@ jobs:
           name: shard-json-${{ matrix.shard }}
           path: test-results/
 
-########################################
-# 2️⃣ MERGE SUMMARY (JSON = SOURCE OF TRUTH)
-########################################
-  merge-summary:
-    name: Merge Test Summary
-    needs: parallel-tests
-    runs-on: ubuntu-latest
-    if: always()
 
-    steps:
-      - name: Download shard JSON reports
-        uses: actions/download-artifact@v4
-        with:
-          path: reports
-
-      - name: Build merged summary HTML
-        run: |
-          python <<'PY'
-          import json, glob
-
-          total = {"passed": 0, "failed": 0, "skipped": 0}
-
-          for file in glob.glob("reports/**/report-*.json", recursive=True):
-              with open(file) as f:
-                  s = json.load(f)["summary"]
-              for k in total:
-                  total[k] += s.get(k, 0)
-
-          html = f"""
-          <html>
-          <head><title>Merged Test Summary</title></head>
-          <body>
-          <h1>Merged Playwright Test Summary</h1>
-          <ul>
-            <li>Passed: {total['passed']}</li>
-            <li>Failed: {total['failed']}</li>
-            <li>Skipped: {total['skipped']}</li>
-          </ul>
-          </body>
-          </html>
-          """
-
-          with open("merged-summary.html", "w") as f:
-              f.write(html)
-
-          print("Merged summary created")
-          PY
-
-      - name: Upload merged summary
-        uses: actions/upload-artifact@v4
-        with:
-          name: merged-test-summary
-          path: merged-summary.html
 
 ########################################
-# 3️⃣ SERIAL RUN FOR FULL HTML REPORT
+#  HTML REPORT
 ########################################
   detailed-html-report:
-    name: Detailed HTML Report (Serial)
+    name: Detailed HTML Report
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
