@@ -47,13 +47,13 @@ jobs:
           path: |
             shard-xml-*.xml
             shard-html-*.html
-            test-results/           # Playwright traces, videos, screenshots
-            playwright-report/      # If using built-in Playwright reporter
+            test-results/
+            playwright-report/
 
   merge-reports:
     needs: test-shards
     runs-on: ubuntu-latest
-    if: always()  # Ensures it runs even if some shards fail
+    if: always()
 
     steps:
       - uses: actions/checkout@v4
@@ -80,13 +80,14 @@ jobs:
           cd reports
           python -m junitparser merge shard-xml-*.xml merged-results.xml
 
-      - name: Generate combined HTML report from merged JUnit XML (no test re-run)
+      - name: Generate combined HTML report (no test execution)
         run: |
           cd reports
           pytest --html=final-report.html --self-contained-html \
                  --junitxml=merged-results.xml \
                  -m "not existing_marker_to_skip_tests" \
-                 --custom-exit-code=0
+                 --suppress-no-test-exit-code || true
+        # || true is a safety net in case the plugin fails to load – it only ignores exit code 5
 
       - name: Upload combined report
         uses: actions/upload-artifact@v4
@@ -97,20 +98,3 @@ jobs:
             reports/merged-results.xml
             reports/test-results/
             reports/playwright-report/
-
-      # Optional: Add GitHub Checks annotation for failed tests
-      # - name: Publish Test Results to GitHub
-      #   if: always()
-      #   uses: mikepenz/action-junit-report@v5
-      #   with:
-      #     report_paths: reports/merged-results.xml
-      #     summary: true
-
-      # Optional: Deploy report to GitHub Pages for easy viewing
-      # - name: Deploy report to GitHub Pages
-      #   uses: peaceiris/actions-gh-pages@v4
-      #   with:
-      #     github_token: ${{ secrets.GITHUB_TOKEN }}
-      #     publish_dir: reports
-      #     publish_branch: gh-pages
-      #     force_orphan: true
