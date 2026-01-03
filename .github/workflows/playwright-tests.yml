@@ -7,7 +7,7 @@ on:
     branches: [ main ]
 
 jobs:
-   playwright-tests:
+  test:
     timeout-minutes: 60
     runs-on: ubuntu-latest
     strategy:
@@ -41,5 +41,88 @@ jobs:
         --dist=loadgroup \
         --splits ${{ matrix.total_shards }} \
         --group ${{ matrix.shard }} \
-        --headed=false \
-        --output=blob-report
+        --html=playwright-report/report-${{ matrix.shard }}.html \
+        --self-contained-html
+
+    - name: Ensure artifact directories exist
+      run: |
+        mkdir -p playwright-report test-results
+        ls -la playwright-report || true
+
+    - name: Upload test results (optional, for traces/videos)
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: playwright-results-shard-${{ matrix.shard }}
+        path: |
+          test-results/
+          playwright-report/
+
+  aggregate:
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all shard artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: reports
+
+      - name: Build single merged HTML report
+        run: |
+          python - <<'PY'
+          import glob, os, base64, re
+
+          reports = sorted(glob.glob('reports/**/playwright-report/report-*.html', recursive=True))
+          if not reports:
+              print('No per-shard reports found, exiting.')
+              raise SystemExit(0)
+
+          items = []
+          total_passed = total_failed = total_skipped = 0
+
+          for r in reports:
+              with open(r, 'r', encoding='utf-8', errors='ignore') as fh:
+                  content = fh.read()
+
+              passed = len(re.findall(r'\\bpassed\\b', content, re.I))
+              failed = len(re.findall(r'\\bfailed\\b', content, re.I))
+              skipped = len(re.findall(r'\\bskipped\\b', content, re.I))
+
+              total_passed += passed
+              total_failed += failed
+              total_skipped += skipped
+
+              encoded = base64.b64encode(content.encode('utf-8')).decode('ascii')
+              items.append((os.path.basename(r), encoded, passed, failed, skipped))
+
+          out = []
+          out.append('<!doctype html>')
+          out.append('<html><head><meta charset="utf-8"><title>Merged Playwright Report</title></head><body>')
+          out.append('<h1>Merged Playwright Report</h1>')
+          out.append(f'<p><strong>Totals:</strong> Passed: {total_passed} &nbsp; Failed: {total_failed} &nbsp; Skipped: {total_skipped}</p>')
+
+          out.append('<h2>Shard Summary</h2><table border="1" cellpadding="6"><tr><th>report</th><th>passed</th><th>failed</th><th>skipped</th></tr>')
+          for name, _, p, f, s in items:
+              out.append(f'<tr><td>{name}</td><td>{p}</td><td>{f}</td><td>{s}</td></tr>')
+          out.append('</table><hr/>')
+
+          for name, encoded, _, _, _ in items:
+              out.append(f'<h3>{name}</h3>')
+              out.append(f'<iframe style="width:100%;height:800px;border:1px solid #ccc" src="data:text/html;charset=utf-8;base64,{encoded}"></iframe>')
+
+          out.append('</body></html>')
+
+          merged_path = 'merged-playwright-report.html'
+          with open(merged_path, 'w', encoding='utf-8') as fh:
+              fh.write('\\n'.join(out))
+
+          print('Wrote', merged_path)
+          PY
+
+      - name: Upload single merged report
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-merged-single
+          path: merged-playwright-report.html
