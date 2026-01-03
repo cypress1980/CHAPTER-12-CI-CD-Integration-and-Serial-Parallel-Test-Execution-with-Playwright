@@ -1,4 +1,4 @@
-name: Playwright Python Tests with Sharding
+name: Playwright Python Tests - Sharded with Combined Report
 
 on:
   push:
@@ -13,84 +13,94 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]  # Adjust to your number of shards
-        total_shards: [3]
+        shard: [1, 2, 3]          # Increase this number for more parallel shards
+        total_shards: [3]         # Must match the number of shards above
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.12'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install pytest pytest-playwright pytest-xdist pytest-split pytest-html  # Add your requirements
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-playwright pytest-xdist pytest-split pytest-html junitparser
 
-    - name: Install Playwright browsers
-      run: playwright install --with-deps
+      - name: Install Playwright browsers
+        run: playwright install --with-deps
 
-    - name: Run sharded tests
-      run: |
-        pytest --splits ${{ matrix.total_shards }} --group ${{ matrix.shard }} \
-               -n auto \
-               --junitxml=shard-xml-${{ matrix.shard }}.xml \
-               --html=shard-html-${{ matrix.shard }}.html --self-contained-html
+      - name: Run sharded tests
+        run: |
+          pytest --splits ${{ matrix.total_shards }} --group ${{ matrix.shard }} \
+                 -n auto \
+                 --junitxml=shard-xml-${{ matrix.shard }}.xml \
+                 --html=shard-html-${{ matrix.shard }}.html --self-contained-html
 
-    - name: Upload shard artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: shard-${{ matrix.shard }}-reports
-        path: |
-          shard-xml-*.xml
-          shard-html-*.html
-          test-results/  # If you have Playwright traces/videos
+      - name: Upload shard reports as artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shard-${{ matrix.shard }}-reports
+          path: |
+            shard-xml-*.xml
+            shard-html-*.html
+            test-results/           # Playwright traces, videos, screenshots
+            playwright-report/      # If using built-in Playwright reporter
 
   merge-reports:
-    needs: test-shards  # Runs only after all shards complete
+    needs: test-shards
     runs-on: ubuntu-latest
+    if: always()  # Ensures it runs even if some shards fail
+
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.12'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
-    - name: Install dependencies
-      run: |
-        pip install pytest pytest-html xunitmerge  # xunitmerge for merging XML
+      - name: Install required tools
+        run: |
+          pip install pytest pytest-html junitparser
 
-    - name: Download all shard artifacts
-      uses: actions/download-artifact@v4
-      with:
-        pattern: shard-*-reports
-        merge-multiple: true  # Merges all into one directory
+      - name: Download all shard artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: shard-*-reports
+          merge-multiple: true
+          path: reports
 
-    - name: Merge JUnit XML reports
-      run: |
-        xunitmerge shard-xml-*.xml merged-results.xml
+      - name: Merge JUnit XML reports
+        run: |
+          cd reports
+          python -m junitparser merge shard-xml-*.xml merged-results.xml
 
-    - name: Generate combined HTML report
-      run: |
-        pytest --html=final-report.html --self-contained-html -m "not tests" --junitxml=merged-results.xml
-      # The marker "not tests" ensures no real tests run; it just processes the XML
+      - name: Generate single combined HTML report
+        run: |
+          cd reports
+          pytest --html=final-report.html --self-contained-html \
+                 -m "not existing_marker_to_skip_tests" \
+                 --junitxml=merged-results.xml
 
-    - name: Upload final report
-      uses: actions/upload-artifact@v4
-      with:
-        name: combined-pytest-report
-        path: |
-          final-report.html
-          merged-results.xml
+      - name: Upload combined report
+        uses: actions/upload-artifact@v4
+        with:
+          name: combined-playwright-report
+          path: |
+            reports/final-report.html
+            reports/merged-results.xml
+            reports/test-results/
+            reports/playwright-report/
 
-    # Optional: Publish to GitHub Pages for permanent link
-    # - name: Deploy to GitHub Pages
-    #   uses: peaceiris/actions-gh-pages@v4
-    #   with:
-    #     github_token: ${{ secrets.GITHUB_TOKEN }}
-    #     publish_dir: ./
-    #     publish_branch: gh-pages
-    #     force_orphan: true
+      # Optional: Deploy report to GitHub Pages for easy viewing
+      # - name: Deploy report to GitHub Pages
+      #   uses: peaceiris/actions-gh-pages@v4
+      #   with:
+      #     github_token: ${{ secrets.GITHUB_TOKEN }}
+      #     publish_dir: reports
+      #     publish_branch: gh-pages
+      #     force_orphan: true
