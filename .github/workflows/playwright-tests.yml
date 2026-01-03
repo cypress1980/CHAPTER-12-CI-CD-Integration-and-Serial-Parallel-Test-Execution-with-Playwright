@@ -41,13 +41,10 @@ jobs:
         --dist=loadgroup \
         --splits ${{ matrix.total_shards }} \
         --group ${{ matrix.shard }} \
-        --html=playwright-report/report-${{ matrix.shard }}.html \
-        --self-contained-html
-
-    - name: Ensure artifact directories exist
-      run: |
-        mkdir -p playwright-report test-results
-        ls -la playwright-report || true
+        --headed=false \
+        --output=blob-report
+      env:
+        PLAYWRIGHT_JSON_OUTPUT_NAME: blob-report/report.json
 
     - name: Upload blob report to GitHub Actions Artifacts
       if: ${{ !cancelled() }}
