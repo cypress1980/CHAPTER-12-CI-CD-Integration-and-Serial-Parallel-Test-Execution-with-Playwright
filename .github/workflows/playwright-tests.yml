@@ -13,23 +13,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Adjust number of shards (e.g., 5 for 5 parallel jobs)
-        # Free GitHub runners allow up to ~20 concurrent jobs
         shard: [1, 2, 3]
         total_shards: [3]
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
     - name: Set up Python
       uses: actions/setup-python@v6
       with:
-        python-version: '3.12'  # Or your version
+        python-version: '3.12'
 
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt  # Includes pytest, pytest-playwright, pytest-xdist, pytest-split
+        pip install -r requirements.txt
+        pip install pytest-json-report
 
     - name: Install Playwright browsers
       run: playwright install --with-deps
@@ -37,92 +37,109 @@ jobs:
     - name: Run sharded tests
       run: |
         pytest tests \
-        -n auto \
-        --dist=loadgroup \
-        --splits ${{ matrix.total_shards }} \
-        --group ${{ matrix.shard }} \
-        --html=playwright-report/report-${{ matrix.shard }}.html \
-        --self-contained-html
+          -n auto \
+          --dist=loadgroup \
+          --splits ${{ matrix.total_shards }} \
+          --group ${{ matrix.shard }} \
+          --html=playwright-report/report-${{ matrix.shard }}.html \
+          --self-contained-html \
+          --json-report \
+          --json-report-file=test-results/report-${{ matrix.shard }}.json
 
-    - name: Ensure artifact directories exist
-      run: |
-        mkdir -p playwright-report test-results
-        ls -la playwright-report || true
-
-    - name: Upload test results (optional, for traces/videos)
+    - name: Upload shard artifacts
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: playwright-results-shard-${{ matrix.shard }}
+        name: shard-${{ matrix.shard }}
         path: |
-          test-results/
           playwright-report/
+          test-results/
 
   aggregate:
+    name: Merge Reports
     needs: test
     if: always()
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download all shard artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: reports
+    - name: Download all shard artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: reports
 
-      - name: Build single merged HTML report
-        run: |
-          python - <<'PY'
-          import glob, os, base64, re
+    - name: Build merged Playwright report
+      run: |
+        python <<'PY'
+        import json, glob, os, base64
 
-          reports = sorted(glob.glob('reports/**/playwright-report/report-*.html', recursive=True))
-          if not reports:
-              print('No per-shard reports found, exiting.')
-              raise SystemExit(0)
+        json_reports = glob.glob('reports/**/test-results/report-*.json', recursive=True)
+        html_reports = glob.glob('reports/**/playwright-report/report-*.html', recursive=True)
 
-          items = []
-          total_passed = total_failed = total_skipped = 0
+        if not json_reports:
+            raise SystemExit("No JSON reports found")
 
-          for r in reports:
-              with open(r, 'r', encoding='utf-8', errors='ignore') as fh:
-                  content = fh.read()
+        items = []
+        total_passed = total_failed = total_skipped = 0
 
-              passed = len(re.findall(r'\\bpassed\\b', content, re.I))
-              failed = len(re.findall(r'\\bfailed\\b', content, re.I))
-              skipped = len(re.findall(r'\\bskipped\\b', content, re.I))
+        for jr in sorted(json_reports):
+            with open(jr) as f:
+                data = json.load(f)
 
-              total_passed += passed
-              total_failed += failed
-              total_skipped += skipped
+            s = data.get("summary", {})
+            passed = s.get("passed", 0)
+            failed = s.get("failed", 0)
+            skipped = s.get("skipped", 0)
 
-              encoded = base64.b64encode(content.encode('utf-8')).decode('ascii')
-              items.append((os.path.basename(r), encoded, passed, failed, skipped))
+            total_passed += passed
+            total_failed += failed
+            total_skipped += skipped
 
-          out = []
-          out.append('<!doctype html>')
-          out.append('<html><head><meta charset="utf-8"><title>Merged Playwright Report</title></head><body>')
-          out.append('<h1>Merged Playwright Report</h1>')
-          out.append(f'<p><strong>Totals:</strong> Passed: {total_passed} &nbsp; Failed: {total_failed} &nbsp; Skipped: {total_skipped}</p>')
+            shard = os.path.basename(jr).replace(".json", ".html")
+            html_path = next(h for h in html_reports if shard in h)
 
-          out.append('<h2>Shard Summary</h2><table border="1" cellpadding="6"><tr><th>report</th><th>passed</th><th>failed</th><th>skipped</th></tr>')
-          for name, _, p, f, s in items:
-              out.append(f'<tr><td>{name}</td><td>{p}</td><td>{f}</td><td>{s}</td></tr>')
-          out.append('</table><hr/>')
+            with open(html_path, "r", encoding="utf-8") as f:
+                encoded = base64.b64encode(f.read().encode()).decode()
 
-          for name, encoded, _, _, _ in items:
-              out.append(f'<h3>{name}</h3>')
-              out.append(f'<iframe style="width:100%;height:800px;border:1px solid #ccc" src="data:text/html;charset=utf-8;base64,{encoded}"></iframe>')
+            items.append((shard, encoded, passed, failed, skipped))
 
-          out.append('</body></html>')
+        out = [
+            "<!doctype html>",
+            "<html><head><meta charset='utf-8'>",
+            "<title>Merged Playwright Report</title>",
+            "<style>",
+            "body{font-family:Arial;padding:20px}",
+            "table{border-collapse:collapse;margin-bottom:20px}",
+            "th,td{border:1px solid #ccc;padding:8px}",
+            "th{background:#f4f4f4}",
+            "iframe{width:100%;height:800px;border:1px solid #ccc}",
+            "</style></head><body>",
+            "<h1>Merged Playwright Report</h1>",
+            f"<p><b>Totals:</b> Passed: {total_passed} | Failed: {total_failed} | Skipped: {total_skipped}</p>",
+            "<h2>Shard Summary</h2>",
+            "<table><tr><th>Report</th><th>Passed</th><th>Failed</th><th>Skipped</th></tr>"
+        ]
 
-          merged_path = 'merged-playwright-report.html'
-          with open(merged_path, 'w', encoding='utf-8') as fh:
-              fh.write('\\n'.join(out))
+        for name, _, p, f, s in items:
+            out.append(f"<tr><td>{name}</td><td>{p}</td><td>{f}</td><td>{s}</td></tr>")
 
-          print('Wrote', merged_path)
-          PY
+        out.append("</table><hr/>")
 
-      - name: Upload single merged report
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report-merged-single
-          path: merged-playwright-report.html
+        for name, encoded, *_ in items:
+            out.append(f"<h3>{name}</h3>")
+            out.append(
+                f"<iframe src='data:text/html;base64,{encoded}'></iframe>"
+            )
+
+        out.append("</body></html>")
+
+        with open("merged-playwright-report.html", "w", encoding="utf-8") as f:
+            f.write("\n".join(out))
+
+        print("Merged report generated")
+        PY
+
+    - name: Upload merged report
+      uses: actions/upload-artifact@v4
+      with:
+        name: playwright-report-merged
+        path: merged-playwright-report.html
