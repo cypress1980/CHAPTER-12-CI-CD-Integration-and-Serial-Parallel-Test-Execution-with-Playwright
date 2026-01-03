@@ -1,11 +1,9 @@
 name: Playwright Python Tests - Sharded with Combined Report
-
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
-
+    branches: [main]
 jobs:
   test-shards:
     timeout-minutes: 60
@@ -13,17 +11,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]          # Increase this number for more parallel shards
-        total_shards: [3]         # Must match the number of shards above
-
+        shard: [1, 2, 3] # Increase this number for more parallel shards
+        total_shards: [3] # Must match the number of shards above
     steps:
       - uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
-
+          python-version: "3.12"
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -31,14 +26,12 @@ jobs:
 
       - name: Install Playwright browsers
         run: playwright install --with-deps
-
       - name: Run sharded tests
         run: |
           pytest --splits ${{ matrix.total_shards }} --group ${{ matrix.shard }} \
                  -n auto \
                  --junitxml=shard-xml-${{ matrix.shard }}.xml \
                  --html=shard-html-${{ matrix.shard }}.html --self-contained-html
-
       - name: Upload shard reports as artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -49,25 +42,21 @@ jobs:
             shard-html-*.html
             test-results/
             playwright-report/
-
   merge-reports:
     needs: test-shards
     runs-on: ubuntu-latest
-    if: always()  # Run even if some shards fail
+    if: always() # Run even if some shards fail
 
     steps:
       - uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
-
+          python-version: "3.12"
       - name: Install required tools
         run: |
           python -m pip install --upgrade pip
           pip install junitparser junit2html
-
       - name: Download all shard artifacts
         uses: actions/download-artifact@v4
         with:
@@ -79,12 +68,10 @@ jobs:
         run: |
           cd reports
           python -m junitparser merge shard-xml-*.xml merged-results.xml
-
       - name: Generate combined HTML report from merged JUnit XML
         run: |
           cd reports
           junit2html merged-results.xml final-report.html
-
       - name: Upload combined report
         uses: actions/upload-artifact@v4
         with:
@@ -94,12 +81,3 @@ jobs:
             reports/merged-results.xml
             reports/test-results/
             reports/playwright-report/
-
-      # Optional: Deploy to GitHub Pages for easy viewing
-      # - name: Deploy report to GitHub Pages
-      #   uses: peaceiris/actions-gh-pages@v4
-      #   with:
-      #     github_token: ${{ secrets.GITHUB_TOKEN }}
-      #     publish_dir: reports
-      #     publish_branch: gh-pages
-      #     force_orphan: true
