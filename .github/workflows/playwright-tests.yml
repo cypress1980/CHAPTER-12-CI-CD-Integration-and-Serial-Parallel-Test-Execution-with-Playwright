@@ -6,10 +6,15 @@ on:
   pull_request:
     branches: [ main ]
 
+########################################
+# 1️⃣ PARALLEL SHARDED EXECUTION (FAST)
+########################################
 jobs:
-  test:
-    timeout-minutes: 60
+  parallel-tests:
+    name: Parallel Sharded Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+
     strategy:
       fail-fast: false
       matrix:
@@ -17,129 +22,126 @@ jobs:
         total_shards: [3]
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v6
-      with:
-        python-version: '3.12'
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install pytest-json-report
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest-json-report
 
-    - name: Install Playwright browsers
-      run: playwright install --with-deps
+      - name: Install Playwright browsers
+        run: playwright install --with-deps
 
-    - name: Run sharded tests
-      run: |
-        pytest tests \
-          -n auto \
-          --dist=loadgroup \
-          --splits ${{ matrix.total_shards }} \
-          --group ${{ matrix.shard }} \
-          --html=playwright-report/report-${{ matrix.shard }}.html \
-          --self-contained-html \
-          --json-report \
-          --json-report-file=test-results/report-${{ matrix.shard }}.json
+      - name: Run sharded tests
+        run: |
+          pytest tests \
+            -n auto \
+            --dist=loadgroup \
+            --splits ${{ matrix.total_shards }} \
+            --group ${{ matrix.shard }} \
+            --json-report \
+            --json-report-file=test-results/report-${{ matrix.shard }}.json
 
-    - name: Upload shard artifacts
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: shard-${{ matrix.shard }}
-        path: |
-          playwright-report/
-          test-results/
+      - name: Upload shard JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shard-json-${{ matrix.shard }}
+          path: test-results/
 
-  aggregate:
-    name: Merge Reports
-    needs: test
-    if: always()
+########################################
+# 2️⃣ MERGE SUMMARY (JSON = SOURCE OF TRUTH)
+########################################
+  merge-summary:
+    name: Merge Test Summary
+    needs: parallel-tests
     runs-on: ubuntu-latest
+    if: always()
 
     steps:
-    - name: Download all shard artifacts
-      uses: actions/download-artifact@v4
-      with:
-        path: reports
+      - name: Download shard JSON reports
+        uses: actions/download-artifact@v4
+        with:
+          path: reports
 
-    - name: Build merged Playwright report
-      run: |
-        python <<'PY'
-        import json, glob, os, base64
+      - name: Build merged summary HTML
+        run: |
+          python <<'PY'
+          import json, glob
 
-        json_reports = glob.glob('reports/**/test-results/report-*.json', recursive=True)
-        html_reports = glob.glob('reports/**/playwright-report/report-*.html', recursive=True)
+          total = {"passed": 0, "failed": 0, "skipped": 0}
 
-        if not json_reports:
-            raise SystemExit("No JSON reports found")
+          for file in glob.glob("reports/**/report-*.json", recursive=True):
+              with open(file) as f:
+                  s = json.load(f)["summary"]
+              for k in total:
+                  total[k] += s.get(k, 0)
 
-        items = []
-        total_passed = total_failed = total_skipped = 0
+          html = f"""
+          <html>
+          <head><title>Merged Test Summary</title></head>
+          <body>
+          <h1>Merged Playwright Test Summary</h1>
+          <ul>
+            <li>Passed: {total['passed']}</li>
+            <li>Failed: {total['failed']}</li>
+            <li>Skipped: {total['skipped']}</li>
+          </ul>
+          </body>
+          </html>
+          """
 
-        for jr in sorted(json_reports):
-            with open(jr) as f:
-                data = json.load(f)
+          with open("merged-summary.html", "w") as f:
+              f.write(html)
 
-            s = data.get("summary", {})
-            passed = s.get("passed", 0)
-            failed = s.get("failed", 0)
-            skipped = s.get("skipped", 0)
+          print("Merged summary created")
+          PY
 
-            total_passed += passed
-            total_failed += failed
-            total_skipped += skipped
+      - name: Upload merged summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: merged-test-summary
+          path: merged-summary.html
 
-            shard = os.path.basename(jr).replace(".json", ".html")
-            html_path = next(h for h in html_reports if shard in h)
+########################################
+# 3️⃣ SERIAL RUN FOR FULL HTML REPORT
+########################################
+  detailed-html-report:
+    name: Detailed HTML Report (Serial)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
 
-            with open(html_path, "r", encoding="utf-8") as f:
-                encoded = base64.b64encode(f.read().encode()).decode()
+    steps:
+      - uses: actions/checkout@v4
 
-            items.append((shard, encoded, passed, failed, skipped))
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
 
-        out = [
-            "<!doctype html>",
-            "<html><head><meta charset='utf-8'>",
-            "<title>Merged Playwright Report</title>",
-            "<style>",
-            "body{font-family:Arial;padding:20px}",
-            "table{border-collapse:collapse;margin-bottom:20px}",
-            "th,td{border:1px solid #ccc;padding:8px}",
-            "th{background:#f4f4f4}",
-            "iframe{width:100%;height:800px;border:1px solid #ccc}",
-            "</style></head><body>",
-            "<h1>Merged Playwright Report</h1>",
-            f"<p><b>Totals:</b> Passed: {total_passed} | Failed: {total_failed} | Skipped: {total_skipped}</p>",
-            "<h2>Shard Summary</h2>",
-            "<table><tr><th>Report</th><th>Passed</th><th>Failed</th><th>Skipped</th></tr>"
-        ]
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-        for name, _, p, f, s in items:
-            out.append(f"<tr><td>{name}</td><td>{p}</td><td>{f}</td><td>{s}</td></tr>")
+      - name: Install Playwright browsers
+        run: playwright install --with-deps
 
-        out.append("</table><hr/>")
+      - name: Run tests (serial for full HTML)
+        run: |
+          pytest tests \
+            --html=playwright-report/full-report.html \
+            --self-contained-html
 
-        for name, encoded, *_ in items:
-            out.append(f"<h3>{name}</h3>")
-            out.append(
-                f"<iframe src='data:text/html;base64,{encoded}'></iframe>"
-            )
-
-        out.append("</body></html>")
-
-        with open("merged-playwright-report.html", "w", encoding="utf-8") as f:
-            f.write("\n".join(out))
-
-        print("Merged report generated")
-        PY
-
-    - name: Upload merged report
-      uses: actions/upload-artifact@v4
-      with:
-        name: playwright-report-merged
-        path: merged-playwright-report.html
+      - name: Upload full HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-full-html-report
+          path: playwright-report/full-report.html
