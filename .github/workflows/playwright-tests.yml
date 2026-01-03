@@ -27,7 +27,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pytest-playwright pytest-xdist pytest-split pytest-html junitparser
+          pip install pytest pytest-playwright pytest-xdist pytest-split pytest-html pytest-custom-exit-code junitparser
 
       - name: Install Playwright browsers
         run: playwright install --with-deps
@@ -65,7 +65,8 @@ jobs:
 
       - name: Install required tools
         run: |
-          pip install pytest pytest-html junitparser
+          python -m pip install --upgrade pip
+          pip install pytest pytest-html pytest-custom-exit-code junitparser
 
       - name: Download all shard artifacts
         uses: actions/download-artifact@v4
@@ -79,12 +80,13 @@ jobs:
           cd reports
           python -m junitparser merge shard-xml-*.xml merged-results.xml
 
-      - name: Generate single combined HTML report
+      - name: Generate combined HTML report from merged JUnit XML (no test re-run)
         run: |
           cd reports
           pytest --html=final-report.html --self-contained-html \
+                 --junitxml=merged-results.xml \
                  -m "not existing_marker_to_skip_tests" \
-                 --junitxml=merged-results.xml
+                 --custom-exit-code=0
 
       - name: Upload combined report
         uses: actions/upload-artifact@v4
@@ -95,6 +97,14 @@ jobs:
             reports/merged-results.xml
             reports/test-results/
             reports/playwright-report/
+
+      # Optional: Add GitHub Checks annotation for failed tests
+      # - name: Publish Test Results to GitHub
+      #   if: always()
+      #   uses: mikepenz/action-junit-report@v5
+      #   with:
+      #     report_paths: reports/merged-results.xml
+      #     summary: true
 
       # Optional: Deploy report to GitHub Pages for easy viewing
       # - name: Deploy report to GitHub Pages
